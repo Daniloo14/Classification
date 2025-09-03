@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>KNN Visualizer</title>
+    <style>
+        body { font-family: Arial, Helvetica, sans-serif; background:#f6f8fa; margin:0; padding:20px; display:flex; flex-direction:column; align-items:center; }
+        h1 { margin: 0 0 8px 0; }
+        .controls { display:flex; gap:12px; align-items:center; margin-bottom:8px; }
+        canvas { background:#fbfdff; border:1px solid #ddd; border-radius:8px; box-shadow:0 2px 6px rgba(0,0,0,0.06); }
+        .hint { color:#666; font-size:13px; margin-bottom:8px; }
+        button { background:#0366d6; color:#fff; border:0; padding:8px 10px; border-radius:6px; cursor:pointer; }
+        input[type=number] { width:60px }
+    </style>
+</head>
+<body>
+    <h1>KNN Visualizer</h1>
+    <div class="hint">On load: random red/blue points appear. Click canvas to add a point and classify it by KNN.</div>
+
+    <div class="controls">
+        <label for="kRange">k:</label>
+        <input id="kRange" type="range" min="1" max="30" value="3">
+        <input id="kNumber" type="number" min="1" max="30" value="3">
+        <button id="regen">Generate random points</button>
+        <button id="clear">Clear canvas</button>
+    </div>
+
+    <!-- Canvas: fixed size 800x600 as requested -->
+    <canvas id="canvas" width="800" height="600"></canvas>
+
+    <script>
+        // --- Configuration and state ---
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const kRange = document.getElementById('kRange');
+        const kNumber = document.getElementById('kNumber');
+        const regenBtn = document.getElementById('regen');
+        const clearBtn = document.getElementById('clear');
+
+        const W = canvas.width, H = canvas.height;
+        const R = 5; // radius for points
+        const INITIAL_POINTS = 40; // number of random points to generate on load
+
+        // points array: { x, y, cls: 'red'|'blue'|'unknown', fixed: true|false }
+        // fixed=true for pre-generated points; user-added points are fixed=false
+        let points = [];
+        let k = parseInt(kRange.value, 10);
+
+        /*
+            RANDOM POINT GENERATION
+            - Generate `n` points with random x,y and randomly assigned class 'red' or 'blue'.
+            - Mark them as fixed (these are the labeled training points KNN uses).
+        */
+        function generateRandomPoints(n) {
+            const out = [];
+            for (let i = 0; i < n; i++) {
+                const x = Math.random() * (W - 2*R) + R;
+                const y = Math.random() * (H - 2*R) + R;
+                const cls = Math.random() < 0.5 ? 'red' : 'blue';
+                out.push({ x, y, cls, fixed: true });
+            }
+            return out;
+        }
+
+        /*
+            DRAWING / REDRAWING
+            - Clears the canvas and draws all points from the `points` array.
+            - Fixed (training) points are drawn with thin border. User points drawn with darker border.
+        */
+        function redraw() {
+            ctx.clearRect(0, 0, W, H);
+            for (let i = 0; i < points.length; i++) {
+                const p = points[i];
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, R, 0, Math.PI*2);
+                ctx.fillStyle = (p.cls === 'red') ? '#e74c3c' : (p.cls === 'blue' ? '#3498db' : '#aaaaaa');
+                ctx.fill();
+                ctx.lineWidth = p.fixed ? 1 : 2;
+                ctx.strokeStyle = p.fixed ? 'rgba(0,0,0,0.08)' : '#222';
+                ctx.stroke();
+            }
+        }
+
+        /*
+            DISTANCE CALCULATION
+            - Euclidean distance between two points.
+        */
+        function distance(a, b) {
+            const dx = a.x - b.x;
+            const dy = a.y - b.y;
+            return Math.hypot(dx, dy);
+        }
+
+        /*
+            KNN CLASSIFICATION
+            - Given a coordinate (x,y) and k, find the k nearest fixed (training) points
+                and return the majority class ('red' or 'blue').
+        */
+        function classifyKNN(x, y, kVal) {
+            const training = points.filter(p => p.fixed);
+            if (training.length === 0) return 'red'; // default if no training points
+            // compute distances to training points
+            const dists = training.map(p => ({ cls: p.cls, d: Math.hypot(p.x - x, p.y - y) }));
+            // sort by increasing distance
+            dists.sort((a,b) => a.d - b.d);
+            const kUse = Math.min(kVal, dists.length);
+            let redCount = 0, blueCount = 0;
+            for (let i = 0; i < kUse; i++) {
+                if (dists[i].cls === 'red') redCount++; else blueCount++;
+            }
+            return blueCount > redCount ? 'blue' : 'red';
+        }
+
+        /*
+            CLICK HANDLER
+            - When user clicks the canvas: create a new point at click location.
+            - The new point starts as 'unknown' but we immediately classify it using KNN
+                and set its class to 'red' or 'blue' based on majority vote among k nearest training points.
+            - The new point is not marked as fixed (so it won't be used as training data unless you want it to).
+        */
+        canvas.addEventListener('click', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            // create point (initially unknown)
+            const newPoint = { x, y, cls: 'unknown', fixed: false };
+            // classify using current k
+            const cls = classifyKNN(x, y, k);
+            newPoint.cls = cls;
+            points.push(newPoint);
+            redraw();
+        });
+
+        /*
+            K CHANGE HANDLING
+            - When k changes, reclassify all non-fixed (user-added) points immediately.
+        */
+        function setK(newK) {
+            k = newK;
+            // reclassify user points
+            points = points.map(p => {
+                if (p.fixed) return p;
+                return { x: p.x, y: p.y, cls: classifyKNN(p.x, p.y, k), fixed: false };
+            });
+            redraw();
+        }
+
+        kRange.addEventListener('input', (e) => {
+            const v = parseInt(e.target.value, 10);
+            kNumber.value = v;
+            document.getElementById('kNumber')?.setAttribute('value', String(v));
+            setK(v);
+        });
+
+        // two-way binding for number input
+        kNumber.addEventListener('input', (e) => {
+            let v = parseInt(e.target.value, 10) || 1;
+            if (v < 1) v = 1;
+            if (v > 30) v = 30;
+            kRange.value = v;
+            setK(v);
+        });
+
+        /*
+            REGENERATE and CLEAR
+        */
+        regenBtn.addEventListener('click', () => {
+            points = generateRandomPoints(INITIAL_POINTS);
+            redraw();
+        });
+
+        clearBtn.addEventListener('click', () => {
+            // remove all points
+            points = [];
+            redraw();
+        });
+
+        // --- Initial setup ---
+        points = generateRandomPoints(INITIAL_POINTS);
+        redraw();
+
+        // expose for debugging
+        window._knn = { points };
+    </script>
+</body>
+</html>
